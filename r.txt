@@ -1,0 +1,5 @@
+telebot
+python-dotenv
+telethon
+openai
+aiohttp
