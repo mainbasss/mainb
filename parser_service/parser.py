@@ -13,9 +13,7 @@ import traceback
 from parser_service.gpt import long_message
 from parser_service import *
 # Название файла сессии и данные API
-session_file = 'anon'  # Имя твоего файла .session (без расширения)
-api_id = 29569565
-api_hash = 'ee9774481e8a1bd59ce3481c0d93cfe3'
+
 load_dotenv()
 bot = telebot.TeleBot(TOKEN)
 # Подключение через файл сессии
