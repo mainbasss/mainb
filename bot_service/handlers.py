@@ -1,110 +1,74 @@
-import json
-import os
+# bot_service/handlers.py
+#from telebot.types import CallbackQuery
 from collections import defaultdict
-import sqlite3
-import sys
-import traceback
-
-import telebot
-from telebot.apihelper import ApiTelegramException
-
-from dotenv import load_dotenv
 from telebot import types
-from help import *
-from parser_help import Base as ParserBase
-from time import sleep
-
-from format import format_message
-
-from gpt import gpt_message
-from Promotion.api import StreamPromotionAPI
-
-load_dotenv()
-bot = telebot.TeleBot(os.environ["TOKEN"])
-def error_log(e):
-    with open ('log.txt', 'a', encoding = 'utf-8') as f:
-        f.write(traceback.format_exc())
-        f.write('\n###########-=ERROR=-###########\n')
-admins = [
-302226074, # Я
-]
+from telebot.apihelper import ApiTelegramException
+import traceback
+from bot_service import *
+from parser_service.gpt import gpt_message
 
 START, POLUCH, DONOR, NAKRUTKA = range(4)
-USER_STATE=defaultdict(lambda:START)
-mark = Mark()
-files = Files()
-base = Base()
-pbase = ParserBase()
-api = StreamPromotionAPI()
-print('Started')
-###########
-#Статусы
-def update_state(message,state):
+
+USER_STATE = defaultdict(lambda: START)
+
+def update_state(chat_id, state):
     '''Изменить состояние пользователя'''
-    USER_STATE[message.chat.id]=state
+    USER_STATE[chat_id] = state
 
-def get_state(message):
+def get_state(chat_id):
     '''Получить текущее состояние пользователя'''
-    return USER_STATE[message.chat.id]
+    return USER_STATE[chat_id]
 
-def is_admin(bot_id, chat):
+def is_admin(bot_id, chat, bot):
     try:
         admins = bot.get_chat_administrators(chat)
         for admin in admins:
             if admin.user.id == bot_id:
                 return True
         return False
-    except ApiTelegramException as e:
+    except ApiTelegramException:
         return False
 
-
-@bot.message_handler(commands=['start'])
-def start_message(message):
-    '''Отправляет приветственное сообщение на команду start'''
-    if message.chat.type == 'private':
-        #base.regestry(message.chat.id)
-        bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-        bot.send_message(message.chat.id, "Добрый день", reply_markup = mark.start_markup(message.chat.id))
-############################
-#Статусы и ответы в группы
-if True:
+def register_hendlears(bot):
     @bot.message_handler(content_types=['chat_shared'])
     def handle_shared_chat(message):
+
         chat = message.chat_shared.chat_id
         chat_id = message.chat.id
         bot.delete_message(chat_id=chat_id, message_id=message.message_id)
         bot.delete_message(chat_id=chat_id, message_id=message.message_id-1)
-        if is_admin(chat_id, chat):
+        if is_admin(chat_id, chat, bot):
             chat_info = bot.get_chat(chat)
 
-            if get_state(message) == POLUCH:
-                res = base.channel_poluch_add(chat_id, chat, chat_info.title, chat_info.username)
+            if get_state(chat_id) == POLUCH:
+                res = channel_instance.add(chat_id, chat, chat_info.title, chat_info.username)
                 if res:
                     inline_markup = types.InlineKeyboardMarkup(row_width=2)
                     inline_markup.add(types.InlineKeyboardButton(text = "Да", callback_data=f"addeyes_{chat}"),types.InlineKeyboardButton(text = "Нет", callback_data="addeno"))
                     bot.send_message(chat_id, "Канал добавлен\nХотите добавить канал донор?", reply_markup = inline_markup)
-                    update_state(message, START)
+                    update_state(chat_id, START)
                 else:
                     bot.send_message(chat_id, "Канал уже есть", reply_markup = mark.chat_mark())
-            elif get_state(message) == DONOR:
-                res = base.channel_donor_add(chat_id, chat, chat_info.title, chat_info.username)
+            elif get_state(chat_id) == DONOR:
+                res = donor_instance.add(chat_id, chat, chat_info.title, chat_info.username)
                 if res:
-                    donors = base.get_donors(res)
+                    donors = donor_instance.get_donors(res)
                     inline_markup = types.InlineKeyboardMarkup(row_width=2)
                     for donor in donors:
                         inline_markup.add(types.InlineKeyboardButton(text = donor[1], callback_data=f"donorinfo_{donor[0]}"))
                     inline_markup.add(types.InlineKeyboardButton(text = '❇️Добавить донора', callback_data=f"addeyes_{res}"))
                     inline_markup.add(types.InlineKeyboardButton(text = '⬅️Назад', callback_data=f"detail_{res}"))
-                    info = base.get_channel_info(res)
+                    info = channel_instance.get_info(res)
                     bot.send_message(chat_id, f"Доноры канала <b>{info[0]}</>", reply_markup = inline_markup, parse_mode='HTML')
-                    update_state(message, START)
+                    update_state(chat_id, START)
                 else:
                     bot.send_message(chat_id, "Канал уже есть", reply_markup = mark.chat_mark())
+
 
         else:
             bot.send_message(message.chat.id, "Сделайте бота администратором в канала!", reply_markup = mark.chat_mark())
     #NAKRUTKA
-    @bot.message_handler(func=lambda message: get_state(message) == NAKRUTKA)
+    @bot.message_handler(func=lambda message: get_state(message.chat.id) == NAKRUTKA)
     def nakrutka_handler(message):
         chat_id = message.chat.id
         text = message.text
@@ -122,8 +86,8 @@ if True:
             bot.delete_message(chat_id=messs.chat.id, message_id=messs.message_id)
             markup = mark.start_markup(chat_id)
             bot.send_message(chat_id, "Вы отменили ввод данных", reply_markup = markup)
-            base.del_status(chat_id)
-            update_state(message, START)
+            channel_instance.del_status(chat_id)
+            update_state(chat_id, START)
         else:
             try:
                 bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
@@ -151,16 +115,90 @@ if True:
                 elif int(result_string.split(' ')[0]) >= int(result_string.split(' ')[1]):
                     bot.send_message(chat_id, "Первое число должно быть меньше второго")
                 else:
-                    channel_id = base.update_prosmotri_diapazon(chat_id, result_string)
+                    channel_id = channel_instance.update_prosmotri_diapazon(chat_id, result_string)
                     inline_markup = types.InlineKeyboardMarkup(row_width=2)
                     inline_markup.add(types.InlineKeyboardButton(text = '⬅️Назад', callback_data=f"detail_{channel_id}"))
                     bot.send_message(chat_id, f"Диапазон <b>{result_string.replace(' ',' - ')}</> просмотров успешно добавлен", reply_markup = inline_markup, parse_mode='HTML')
-                    update_state(message, START)
+                    update_state(chat_id, START)
             else:
                 bot.send_message(chat_id, "Допустимы только целые числа")
-############################
-# Обработчик нажатий на инлайн-кнопки
-if True:
+    @bot.message_handler(func=lambda message: True, content_types=[
+        'text', 'photo', 'audio', 'document', 'video',
+        'animation', 'voice', 'video_note', 'location',
+        'contact', 'poll', 'dice', 'invoice', 'successful_payment'
+    ])
+    def get_text_messages(message):
+            chat_id = message.chat.id
+            if message.forward_from_chat:
+                chat_id = message.chat.id
+                chat = message.forward_from_chat.id
+                bot.delete_message(chat_id=chat_id, message_id=message.message_id)
+                try:
+                    bot.delete_message(chat_id=chat_id, message_id=message.message_id-1)
+                except:
+                    pass
+                chat_info = message.forward_from_chat
+                if not chat_info.username:
+                    bot.send_message(chat_id, "Канал закрыт", reply_markup=mark.start_markup(chat_id))
+                    channel_instance.del_status(chat_id)
+                    update_state(chat_id, START)  # Измените состояние на START
+                else:
+                    if get_state(chat_id) == POLUCH:
+                        if is_admin(bot.get_me().id, chat, bot):  # Убедитесь, что используете ID бота
+                            res = channel_instance.add(chat_id, chat, chat_info.title, chat_info.username)
+                            if res:
+                                inline_markup = types.InlineKeyboardMarkup(row_width=2)
+                                inline_markup.add(types.InlineKeyboardButton(text="Да", callback_data=f"addeyes_{chat}"),
+                                                   types.InlineKeyboardButton(text="Нет", callback_data="addeno"))
+                                bot.send_message(chat_id, "Канал добавлен\nХотите добавить канал донор?", reply_markup=inline_markup)
+                                update_state(chat_id, START)  # Измените состояние на START
+                            else:
+                                bot.send_message(chat_id, "Канал уже есть", reply_markup=mark.chat_mark())
+                        else:
+                            bot.send_message(chat_id, "Сделайте бота администратором в канале!", reply_markup=mark.chat_mark())
+                    elif get_state(chat_id) == DONOR:
+                        try:
+                            res = donor_instance.add(chat_id, chat, chat_info.title, chat_info.username)
+                            if res:
+                                print('res',res)
+                                donors = donor_instance.get_donors(res)
+                                print('donors',donors)
+                                inline_markup = types.InlineKeyboardMarkup(row_width=2)
+                                for donor in donors:
+                                    inline_markup.add(types.InlineKeyboardButton(text=donor[1], callback_data=f"donorinfo_{donor[0]}_{res}"))
+                                inline_markup.add(types.InlineKeyboardButton(text='❇️Добавить донора', callback_data=f"addeyes_{res}"))
+                                inline_markup.add(types.InlineKeyboardButton(text='⬅️Назад', callback_data=f"detail_{res}"))
+                                info = channel_instance.get_info(res)
+                                print('info',info)
+                                bot.send_message(chat_id, f"Донор <b>{chat_info.title}</> для канала <b>{info[0]}</> успешно добавлен\nДоноры канала <b>{info[0]}</>", reply_markup=inline_markup, parse_mode='HTML')
+                                update_state(chat_id, START)  # Измените состояние на START
+                            else:
+                                bot.send_message(chat_id, "Канал уже есть", reply_markup=mark.chat_mark())
+                        except Exception as e:
+                            print(traceback.format_exc())
+
+            if message.chat.type == 'private':
+                text = message.text
+                chat_id = message.chat.id
+                if text == "🚫 Отмена":
+                    try:
+                        bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+                    except:
+                        pass
+                    try:
+                        bot.delete_message(chat_id=message.chat.id, message_id=message.message_id-1)
+                    except:
+                        pass
+                    remove_markup = types.ReplyKeyboardRemove()
+                    messs = bot.send_message(message.chat.id, "1", reply_markup=remove_markup)
+                    bot.delete_message(chat_id=messs.chat.id, message_id=messs.message_id)
+                    markup = mark.start_markup(chat_id)
+                    bot.send_message(chat_id, "Вы отменили ввод данных", reply_markup=markup)
+                    channel_instance.del_status(chat_id)
+                    update_state(chat_id, START)
+
+#Кнопки
+def register_buttons(bot):
     #Donor Options
     @bot.callback_query_handler(func=lambda call: 'donorOptions' in call.data)
     def handle_callback_query(call):
@@ -171,18 +209,18 @@ if True:
         print('из donorOptions', text)
         donor_id = int(text.split('_')[1])
         channel_id = int(text.split('_')[2])
-        info = base.get_donors_limits(donor_id, channel_id)
+        info = donor_instance.get_limits(donor_id, channel_id)
         message_text = (
             'Здесь вы можете настроить лимит входящих сообщений'
             )
         if 'CountDec' in text:
-            info = base.update_donors_limits(donor_id, channel_id, 'CountDec', info)
+            info = donor_instance.update_limits(donor_id, channel_id, 'CountDec', info)
         elif 'CountInc' in text:
-            info = base.update_donors_limits(donor_id, channel_id, 'CountInc', info)
+            info = donor_instance.update_limits(donor_id, channel_id, 'CountInc', info)
         elif 'Period' in text:
-            info = base.update_donors_limits(donor_id, channel_id, 'Period', info)
+            info = donor_instance.update_limits(donor_id, channel_id, 'Period', info)
         elif 'Del' in text:
-            info = base.update_donors_limits(donor_id, channel_id, 'Del', info)
+            info = donor_instance.update_limits(donor_id, channel_id, 'Del', info)
 
         if not info[0] and not info[1]:
             dop = '\n\n<b>Сейчас лимит не утановлен</>'
@@ -228,15 +266,15 @@ if True:
             bot.answer_callback_query(call.id, "Пост отклонен")
             bot.delete_message(chat_id=chat_id, message_id=call.message.message_id)
             if media:
-                n = base.delete_media_group(grouped_id)
+                n = media_group_instance.delete(grouped_id)
                 for i in range(1, n+1):
                     bot.delete_message(chat_id=chat_id, message_id=call.message.message_id-i)
         elif 'confirm' in text:
             channel_id = int(text.split('_')[2])
-            donor_info = base.get_donor_info(channel_id)
+            donor_info = donor_instance.get_info(channel_id)
             channel = donor_info[0]
             name = donor_info[1]
-            donor_name, channelels = pbase.get_name(channel_id)
+            donor_name, channelels = channel_instance.get_name(channel_id)
             str_channelels = ', @'.join(channelels)
             inline_markup = types.InlineKeyboardMarkup(row_width=2)
             inline_markup.add(types.InlineKeyboardButton(text = '✅Принять', callback_data=f"second_confirm_{channel_id}"),
@@ -273,7 +311,7 @@ if True:
                     bot.send_video(chat_id=chat_id, video=file, caption=message_text, reply_markup=inline_markup, parse_mode='HTML')
             else:
                 if media:
-                    media_files, n = base.get_media_group_from_db(grouped_id)
+                    media_files, n = media_group_instance.get(grouped_id)
                     for i in range(1, n+1):
                         bot.delete_message(chat_id=chat_id, message_id=call.message.message_id-i)
                 message_text = call.message.text.split(name+'\n')[1].split('\n\nК данному источнику(')[0]
@@ -305,7 +343,7 @@ if True:
         elif 'edit' in text:
             channel_id = int(text.split('_')[2])
             markup = types.InlineKeyboardMarkup()
-            donor_info = base.get_donor_info(channel_id)
+            donor_info = donor_instance.get_info(channel_id)
             channel = donor_info[0]
             name = donor_info[1]
             if call.message.photo or call.message.video:
@@ -341,7 +379,7 @@ if True:
         mess = kwargs.get('mess')
         grouped_id = kwargs.get('grouped_id')
         text = message.text
-        donor_name, channelels = pbase.get_name(channel_id)
+        donor_name, channelels = channel_instance.get_name(channel_id)
         str_channelels = ', @'.join(channelels)
         inline_markup = types.InlineKeyboardMarkup(row_width=2)
         if grouped_id:
@@ -378,7 +416,7 @@ if True:
             bot.send_video(chat_id=message.chat.id, video=file, caption=message_text, reply_markup=inline_markup, parse_mode='HTML')
         else:
             if grouped_id:
-                media_files, n = base.get_media_group_from_db(grouped_id)
+                media_files, n = media_group_instance.get(grouped_id)
                 for i in range(1, n+1):
                     bot.delete_message(chat_id=message.chat.id, message_id=mess_id-i)
                 bot.send_media_group(chat_id=message.chat.id, media=media_files)
@@ -401,12 +439,12 @@ if True:
             bot.answer_callback_query(call.id, "Пост отклонен")
             bot.delete_message(chat_id=chat_id, message_id=call.message.message_id)
             if media:
-                n = base.delete_media_group(grouped_id)
+                n = media_group_instance.delete(grouped_id)
                 for i in range(1, n+1):
                     bot.delete_message(chat_id=chat_id, message_id=call.message.message_id-i)
         elif 'confirm' in text:
             channel_id = int(text.split('_')[2])
-            donor_info = base.get_donor_info(channel_id)
+            donor_info = donor_instance.get_info(channel_id)
             channel = donor_info[0]
             name = donor_info[1]
             if call.message.photo:
@@ -420,17 +458,17 @@ if True:
             else:
                 message_text = call.message.text.split(name+':\n')[1].split('\n\nК данному источнику(')[0]
                 if media:
-                    media_files, n = base.get_media_group_from_db(grouped_id)
+                    media_files, n = media_group_instance.get(grouped_id)
                     for i in range(1, n+1):
                         bot.delete_message(chat_id=chat_id, message_id=call.message.message_id-i)
                     media_files[0].caption = message_text  # Добавляем подпись к первому файлу
                     media_files[0].parse_mode = 'HTML'  # Указываем режим для форматирования HTML
                     mess = bot.send_media_group(chat_id=channel, media=media_files)[0]
-                    base.delete_media_group(grouped_id)
+                    media_group_instance.delete(grouped_id)
                 else:
                     mess = bot.send_message(channel, message_text, parse_mode='HTML')
             #diapazon
-            diapazon = base.get_prosmotri_diapazon(channel, chat_id)
+            diapazon = channel_instance.get_prosmotri_diapazon(channel, chat_id)
             if diapazon[0]:
                 link = f"https://t.me/{mess.chat.username}/{mess.message_id}"
                 response = api.create_order(link, diapazon)
@@ -440,7 +478,7 @@ if True:
         elif 'edit' in text:
             channel_id = int(text.split('_')[2])
             markup = types.InlineKeyboardMarkup()
-            donor_info = base.get_donor_info(channel_id)
+            donor_info = donor_instance.get_info(channel_id)
             channel = donor_info[0]
             name = donor_info[1]
             if call.message.photo or call.message.video:
@@ -479,10 +517,10 @@ if True:
         bot_info = bot.get_me()
         bot_username = bot_info.username
         text = message.text.replace(f'@{bot_username}','')
-        donor_info = base.get_donor_info(channel_id)
+        donor_info = donor_instance.get_info(channel_id)
         channel = donor_info[0]
         name = donor_info[1]
-        donor_name, channelels = pbase.get_name(channel_id)
+        donor_name, channelels = channel_instance.get_name(channel_id)
         str_channelels = ', @'.join(channelels)
         inline_markup = types.InlineKeyboardMarkup(row_width=2)
         if grouped_id:
@@ -519,7 +557,7 @@ if True:
                     f'<b>К данному источнику(<code>{donor_name}</>) привязанные данный(ые) канал(ы): @{str_channelels}</>'
                     )
             if grouped_id:
-                media_files, n = base.get_media_group_from_db(grouped_id)
+                media_files, n = media_group_instance.get(grouped_id)
                 for i in range(1, n+1):
                     bot.delete_message(chat_id=message.chat.id, message_id=mess_id-i)
                 bot.send_media_group(chat_id=message.chat.id, media=media_files)
@@ -540,13 +578,13 @@ if True:
             '<b>Пример:</> 15 100'
             )
             bot.send_message(chat_id, text, reply_markup = mark.cancel(), parse_mode = 'HTML')
-            base.channel_poluch_status(channel_id, 'prosmotri')
-            update_state(call.message,NAKRUTKA)
+            channel_instance.update_status(channel_id, 'prosmotri')
+            update_state(chat_id,NAKRUTKA)
         elif 'prosmotri' in text:
             if 'prosmotriDel' in text:
-                base.channel_poluch_status(channel_id, 'prosmotri')
-                channel_id = base.update_prosmotri_diapazon(chat_id, None)
-            diapazon = base.get_prosmotri_diapazon(channel_id, chat_id)
+                channel_instance.update_status(channel_id, 'prosmotri')
+                channel_id = channel_instance.update_prosmotri_diapazon(chat_id, None)
+            diapazon = channel_instance.get_prosmotri_diapazon(channel_id, chat_id)
             markup = mark.prosmotri_diapazon(channel_id, diapazon)
             if diapazon[0]:
                 diapazon = diapazon[0].replace(' ', ' - ')
@@ -574,11 +612,11 @@ if True:
             'Выберите канал, нажав на кнопку ниже ❇️ <b>Выбрать канал</b> (доступны только каналы, где бот админ).\n\n'
             'Или перешлите любой пост из канала сюда (доступны только каналы, где бот админ).'
             , reply_markup = mark.chat_mark(), parse_mode = 'HTML')
-            update_state(call.message, POLUCH)
+            update_state(chat_id, POLUCH)
         elif 'adde' in  text:
             if 'yes' in text:
                 channel_id = int(text.split('_')[1])
-                base.channel_poluch_status(channel_id, 'wait')
+                channel_instance.update_status(channel_id, 'wait')
                 bot.send_message(chat_id,
                 'Давайте добавим канал, из которого будем редиректить посты.\n\n'
                 '<b>❗️Прежде чем добавлять канал, убедитесь что канал открытый, наш сервис не работает с закрытыми '
@@ -586,19 +624,19 @@ if True:
                 'Выберите канал, нажав на кнопку ниже ❇️ <b>Выбрать канал</b> (доступны только каналы, где бот админ).\n\n'
                 'Или перешлите любой пост из канала сюда (поддерживаются любые каналы, даже если бот не админ).'
                 , reply_markup = mark.chat_mark(), parse_mode = 'HTML')
-                update_state(call.message, DONOR)
+                update_state(chat_id, DONOR)
             elif 'no' in text:
                 bot.send_message(chat_id, "Главное меню", reply_markup = mark.start_markup(chat_id))
         elif text == 'channel_get':
-            channels = base.get_channels(chat_id)
+            channels = channel_instance.get_channels(chat_id)
             if not channels:
                 bot.send_message(chat_id, "Вы не добавили ни одного канала", reply_markup = mark.start_markup(chat_id))
             else:
                 bot.send_message(chat_id, "Выберите канал⤵️", reply_markup = mark.all_channels(channels))
         elif 'detail_' in text:
             channel_id = int(text.split('_')[1])
-            info = base.get_channel_info(channel_id)
-            donors = base.get_donors(channel_id)
+            info = channel_instance.get_info(channel_id)
+            donors = donor_instance.get_donors(channel_id)
             if donors == []:
                 donors = 0
             elif donors:
@@ -612,8 +650,8 @@ if True:
                         , reply_markup = mark.channel_info(channel_id), parse_mode = 'HTML')
         elif 'delchannel_' in text:
             channel_id = int(text.split('_')[1])
-            base.delete_channnel(channel_id)
-            channels = base.get_channels(chat_id)
+            channel_instance.delete(channel_id)
+            channels = channel_instance.get_channels(chat_id)
             if channels:
                 bot.send_message(chat_id, "Выберите канал⤵️", reply_markup = mark.all_channels(channels))
             else:
@@ -621,27 +659,27 @@ if True:
         elif 'getdonors_' in text or 'deldonor_' in text:
             if 'deldonor_' in text:
                 donor_id = int(text.split('_')[1])
-                info = base.get_donor_info(donor_id)
+                info = donor_instance.get_info(donor_id)
                 bot.answer_callback_query(call.id, f"Канал {info[1]} удален")
                 channel_id = info[0]
-                base.delete_donor(donor_id)
+                donor_instance.delete(donor_id)
             else:
                 channel_id = int(text.split('_')[1])
-            donors = base.get_donors(channel_id)
+            donors = donor_instance.get_donors(channel_id)
             inline_markup = types.InlineKeyboardMarkup(row_width=2)
             for donor in donors:
                 inline_markup.add(types.InlineKeyboardButton(text = donor[1], callback_data=f"donorinfo_{donor[0]}_{channel_id}"))
             inline_markup.add(types.InlineKeyboardButton(text = '❇️Добавить донора', callback_data=f"addeyes_{channel_id}"))
             inline_markup.add(types.InlineKeyboardButton(text = '⬅️Назад', callback_data=f"detail_{channel_id}"))
-            info = base.get_channel_info(channel_id)
+            info = channel_instance.get_info(channel_id)
             bot.send_message(chat_id, f"Доноры канала <b>{info[0]}</>", reply_markup = inline_markup, parse_mode='HTML')
 
 
         elif 'donorinfo_' in text:
             donor_id = int(text.split('_')[1])
             channel_id = int(text.split('_')[2])
-            info = base.get_donor_info(donor_id)
-            limit_info = base.get_donors_limits(donor_id, channel_id)
+            info = donor_instance.get_info(donor_id)
+            limit_info = donor_instance.get_limits(donor_id, channel_id)
             if not limit_info[0] and not limit_info[1]:
                 dop = ' Сейчас лимит не утановлен'
             elif limit_info[0]:
@@ -658,79 +696,3 @@ if True:
 
 
                     , reply_markup = inline_markup, parse_mode = 'HTML')
-
-@bot.message_handler(func=lambda message: True, content_types=[
-                                'text', 'photo', 'audio', 'document', 'video',
-                                'animation', 'voice', 'video_note', 'location',
-                                'contact', 'poll', 'dice', 'invoice', 'successful_payment'
-                            ])
-def get_text_messages(message):
-    chat_id = message.chat.id
-    if message.forward_from_chat:
-        chat_id = message.chat.id
-        chat = message.forward_from_chat.id
-        bot.delete_message(chat_id=chat_id, message_id=message.message_id)
-        try:
-            bot.delete_message(chat_id=chat_id, message_id=message.message_id-1)
-        except:
-            pass
-        chat_info = message.forward_from_chat
-        if not chat_info.username:
-            bot.send_message(chat_id, "Канал закрыт", reply_markup = mark.start_markup(chat_id))
-            base.del_status(chat_id)
-            update_state(message, START)
-        else:
-            if get_state(message) == POLUCH:
-                if is_admin(chat_id, chat):
-                    res = base.channel_poluch_add(chat_id, chat, chat_info.title, chat_info.username)
-                    if res:
-                        inline_markup = types.InlineKeyboardMarkup(row_width=2)
-                        inline_markup.add(types.InlineKeyboardButton(text = "Да", callback_data=f"addeyes_{chat}"),types.InlineKeyboardButton(text = "Нет", callback_data="addeno"))
-                        bot.send_message(chat_id, "Канал добавлен\nХотите добавить канал донор?", reply_markup = inline_markup)
-                        update_state(message, START)
-                    else:
-                        bot.send_message(chat_id, "Канал уже есть", reply_markup = mark.chat_mark())
-                else:
-                    bot.send_message(message.chat.id, "Сделайте бота администратором в канале!", reply_markup = mark.chat_mark())
-            elif get_state(message) == DONOR:
-                try:
-                    res = base.channel_donor_add(chat_id, chat, chat_info.title, chat_info.username)
-                    if res:
-                        donors = base.get_donors(res)
-                        inline_markup = types.InlineKeyboardMarkup(row_width=2)
-                        for donor in donors:
-                            inline_markup.add(types.InlineKeyboardButton(text = donor[1], callback_data=f"donorinfo_{donor[0]}_{res}"))
-                        inline_markup.add(types.InlineKeyboardButton(text = '❇️Добавить донора', callback_data=f"addeyes_{res}"))
-                        inline_markup.add(types.InlineKeyboardButton(text = '⬅️Назад', callback_data=f"detail_{res}"))
-                        info = base.get_channel_info(res)
-                        bot.send_message(chat_id, f"Донор <b>{chat_info.title}</> для канала <b>{info[0]}</> успешно добавлен\nДоноры канала <b>{info[0]}</>", reply_markup = inline_markup, parse_mode='HTML')
-                        update_state(message, START)
-                    else:
-                        bot.send_message(chat_id, "Канал уже есть", reply_markup = mark.chat_mark())
-                except Exception as e:
-                    print(traceback.format_exc())
-
-    if message.chat.type == 'private':
-        text = message.text
-        chat_id = message.chat.id
-        if text == "🚫 Отмена":
-            try:
-                bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            except:
-                pass
-            try:
-                bot.delete_message(chat_id=message.chat.id, message_id=message.message_id-1)
-            except:
-                pass
-            remove_markup = types.ReplyKeyboardRemove()
-            messs = bot.send_message(message.chat.id, "1", reply_markup=remove_markup)
-            bot.delete_message(chat_id=messs.chat.id, message_id=messs.message_id)
-            markup = mark.start_markup(chat_id)
-            bot.send_message(chat_id, "Вы отменили ввод данных", reply_markup = markup)
-            base.del_status(chat_id)
-            update_state(message, START)
-
-
-
-if __name__ == "__main__":
-    bot.polling(none_stop=True, interval=0, timeout=60)
