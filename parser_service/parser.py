@@ -4,23 +4,21 @@ from telethon import TelegramClient, errors
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon import events
 from dotenv import load_dotenv
-from parser_help import Base
 
 import telebot
 from telebot import types
-from format import format_message
+from .format import format_message
 import asyncio
 import traceback
-from gpt import long_message
+from parser_service.gpt import long_message
+from parser_service import *
 # Название файла сессии и данные API
-session_file = 'anon'  # Имя твоего файла .session (без расширения)
-api_id = 29569565
-api_hash = 'ee9774481e8a1bd59ce3481c0d93cfe3'
+
 load_dotenv()
-bot = telebot.TeleBot(os.environ["TOKEN"])
+bot = telebot.TeleBot(TOKEN)
 # Подключение через файл сессии
 client = TelegramClient(session_file, api_id, api_hash)
-base = Base()
+
 
 
 async def check_new_channels():
@@ -33,13 +31,13 @@ async def check_new_channels():
     for channel in channels:
         ids.append(channel.id)
     #print('ids',ids)
-    current_channels = base.get_donors()  # Получаем актуальный список каналов из базы
+    current_channels = donor_instance.get_donors_for_parser()  # Получаем актуальный список каналов из базы
     #print('current_channels',current_channels)
     for channel in current_channels:
         if channel not in ids:
             print(channel)
-            print(base.get_donor_username(channel))
-            username = 'https://t.me/'+base.get_donor_username(channel)
+            print(donor_instance.get_donor_username(channel))
+            username = 'https://t.me/'+donor_instance.get_donor_username(channel)
             try:
                 # Пробуем присоединиться к новому каналу
                 await client(JoinChannelRequest(username))
@@ -66,7 +64,7 @@ async def main():
             #########################
             @client.on(events.NewMessage)
             async def handler_new_message(event):
-                donors = base.get_donors()
+                donors = donor_instance.get_donors_for_parser()
                 try:
                     ch = event.message.peer_id.channel_id
                     flag = True
@@ -84,7 +82,7 @@ async def main():
                             inline_markup.add(types.InlineKeyboardButton(text = '✅Принять', callback_data=f"first_confirm_{donor_id}"),
                                     types.InlineKeyboardButton(text = '❌Отклонить', callback_data=f"first_refuse_{donor_id}"))
                             inline_markup.add(types.InlineKeyboardButton(text = '✏️Редактировать', callback_data=f"first_edit_{donor_id}"))
-                            donor_name, channelels = base.get_name(donor_id)
+                            donor_name, channelels = channel_instance.get_name(donor_id)
                             str_channelels = ', @'.join(channelels)
 
                             if event.message.photo or event.message.video:
@@ -102,7 +100,7 @@ async def main():
                                     f'{message_text}\n\n'
                                     f'<b>К данному источнику(<code>{donor_name}</>) привязанные данный(ые) канал(ы): @{str_channelels}</>'
                                     )
-                            chat_ids = base.get_chat_id(donor_id)
+                            chat_ids = channel_instance.get_chat_id(donor_id)
                             # Проверяем, если сообщение является частью медиа-группы (альбома)
                             if event.message.grouped_id:
                                 grouped_id = event.message.grouped_id
@@ -147,7 +145,7 @@ async def main():
 
                                         # Отправляем медиа-группу без разметки
                                         if media_files:
-                                            base.save_media_group(grouped_id, event.chat_id, event.message.id, media_files)
+                                            media_group_instance.save_media_group(grouped_id, event.chat_id, event.message.id, media_files)
                                             for chat_id in chat_ids:
                                                 bot.send_media_group(chat_id=chat_id, media=media_files)
 
@@ -178,7 +176,7 @@ async def main():
                                 largest_photo = event.message.photo
                                 file = await client.download_file(largest_photo)
                                 for chat_id in chat_ids:
-                                    if base.get_limit(chat_id, donor_id):
+                                    if donor_instance.get_limit(chat_id, donor_id):
                                         bot.send_photo(chat_id=chat_id,
                                                        photo=file,
                                                        caption=message_text,
@@ -190,7 +188,7 @@ async def main():
                                 video = event.message.video
                                 file = await client.download_file(video)
                                 for chat_id in chat_ids:
-                                    if base.get_limit(chat_id, donor_id):
+                                    if donor_instance.get_limit(chat_id, donor_id):
                                         bot.send_video(chat_id=chat_id,
                                                        video=file,
                                                        caption=message_text,
@@ -199,7 +197,7 @@ async def main():
                             else:
                                 # Если нет медиа, отправляем обычное текстовое сообщение
                                 for chat_id in chat_ids:
-                                    if base.get_limit(chat_id, donor_id):
+                                    if donor_instance.get_limit(chat_id, donor_id):
                                         bot.send_message(chat_id,
                                                          message_text,
                                                          reply_markup=inline_markup,
