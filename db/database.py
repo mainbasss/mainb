@@ -88,7 +88,7 @@ class Channel:
             cursor = conn.cursor()
             cursor.execute('SELECT prosmotri_diapazon FROM channels WHERE channel_id = ? AND chat_id = ?', (channel_id, chat_id))
             data = cursor.fetchone()
-            return data
+            return data[0]
 
     def get_info(self, channel_id):
         with self.db.connect() as conn:
@@ -296,12 +296,25 @@ class MediaGroup:
         with self.db.connect() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT media_type, file_id FROM media_group WHERE grouped_id = ?', (grouped_id,))
-            return cursor.fetchall()
+            media_group = cursor.fetchall()
+            media_files = []
+            n = 0
+            for media_type, file_id in media_group:
+                n+=1
+                if media_type == 'photo':
+                    media_files.append(types.InputMediaPhoto(file_id))
+                elif media_type == 'video':
+                    media_files.append(types.InputMediaVideo(file_id))
+            return media_files, n
 
     def delete(self, grouped_id):
         with self.db.connect() as conn:
             cursor = conn.cursor()
+            cursor.execute('SELECT media_type FROM media_group WHERE grouped_id = ?', (grouped_id,))
+            media_group = cursor.fetchall()
             cursor.execute('DELETE FROM media_group WHERE grouped_id = ?', (grouped_id,))
+            conn.commit()
+            return len(media_group)
 
     def save_media_group(self, grouped_id, chat_id, message_id, media_files):
         with self.db.connect() as conn:

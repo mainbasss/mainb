@@ -1,11 +1,11 @@
 # bot_service/handlers.py
-#from telebot.types import CallbackQuery
 from collections import defaultdict
 from telebot import types
 from telebot.apihelper import ApiTelegramException
 import traceback
 from bot_service import *
 from parser_service.gpt import gpt_message
+from Promotion import promotion_manger
 
 START, POLUCH, DONOR, NAKRUTKA = range(4)
 
@@ -316,7 +316,6 @@ def register_buttons(bot):
                         bot.delete_message(chat_id=chat_id, message_id=call.message.message_id-i)
                 message_text = call.message.text.split(name+'\n')[1].split('\n\nК данному источнику(')[0]
                 while True:
-                    print('Я в ЧАТЕ ЖэПэТэ')
                     message_text_pre = gpt_message(message_text)
                     if ('<li>' in message_text_pre or
                         '<h2>'  in message_text_pre or
@@ -469,9 +468,10 @@ def register_buttons(bot):
                     mess = bot.send_message(channel, message_text, parse_mode='HTML')
             #diapazon
             diapazon = channel_instance.get_prosmotri_diapazon(channel, chat_id)
-            if diapazon[0]:
+            if diapazon:
                 link = f"https://t.me/{mess.chat.username}/{mess.message_id}"
-                response = api.create_order(link, diapazon)
+                print(link)
+                promotion_manger.distribute_views(link, diapazon)
             ######
             bot.delete_message(chat_id=chat_id, message_id=call.message.message_id)
             #отправить в GPT
@@ -586,8 +586,8 @@ def register_buttons(bot):
                 channel_id = channel_instance.update_prosmotri_diapazon(chat_id, None)
             diapazon = channel_instance.get_prosmotri_diapazon(channel_id, chat_id)
             markup = mark.prosmotri_diapazon(channel_id, diapazon)
-            if diapazon[0]:
-                diapazon = diapazon[0].replace(' ', ' - ')
+            if diapazon:
+                diapazon = diapazon.replace(' ', ' - ')
             else:
                 diapazon = 'Просмотры не накручиваются'
             text = (

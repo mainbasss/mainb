@@ -1,6 +1,7 @@
 import os
 
 from telethon import TelegramClient, errors
+from telethon.sessions import StringSession #Временно
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon import events
 from dotenv import load_dotenv
@@ -17,7 +18,7 @@ from parser_service import *
 load_dotenv()
 bot = telebot.TeleBot(TOKEN)
 # Подключение через файл сессии
-client = TelegramClient(session_file, api_id, api_hash)
+client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 
 
